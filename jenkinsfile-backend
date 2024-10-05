@@ -1,0 +1,71 @@
+pipeline{
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        GIT_URL = "https://github.com/ravithikane02/threeTierDevOps.git"
+        BRANCH = "main"
+        SCANNER_HOME = tool name: 'SonarQubeScanner'
+        SONARQUBE_SERVER = 'SonarServer'
+    }
+    stages {
+        stage("SCM checkout"){
+            steps{
+                    git url: env.GIT_URL, branch: env.BRANCH
+                    echo "Code cloned"
+            }
+        }
+        stage("SonarQube analysis") {
+            steps{
+                dir('Application-Code/backend'){
+                    withSonarQubeEnv(SONARQUBE_SERVER) {
+                        sh ''' $SCANNER_HOME/bin/sonar-scanner \
+                                -Dsonar.projenctName=backend \
+                                -Dsonar.projectKey=backend '''
+                    }
+                }
+            }
+        }
+        stage("Qualit gates") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'SonarCreds' 
+                }
+            }
+        }
+        stage("Install dependencies"){
+            steps{
+                dir('Application-Code/backend'){
+                 sh 'npm install'   
+                }
+            }
+        }
+        stage("Trivy fs scan"){
+            steps {
+                dir('Application-Code/backend'){
+                        sh 'trivy fs . > trivyfsscan.txt'
+                }
+            }
+        }
+        stage("Docker Build and Push"){
+            steps{
+                dir('Application-Code/backend'){
+                    script{
+                        withDockerRegistry(credentialsId: 'dockerCred', toolName: 'docker') {
+                            sh 'docker build -t ravithikane02/backend:latest .'
+                            sh 'docker push ravithikane02/backend:latest'
+                        }
+                    }
+                }    
+            }
+        }
+        stage("Trivy image scan"){
+            steps{
+                sh 'trivy image ravithikane02/frontend:latest > trivyimage.txt'
+            }
+        }
+        
+    }
+}
